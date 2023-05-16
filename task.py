@@ -141,7 +141,7 @@ class TaskBase:
                 try:
                     WebDriverWait(self.browser, self.loadWaitTime).until(EC.visibility_of_element_located((By.CLASS_NAME, 'case_card_caseTit__2NM7e')))                
                 except Exception as e:                    
-                    logger.exception("WebDriverWait " + str(e))
+                    logger.error("WebDriverWait timeout")
                 allTask = self.browser.find_elements(By.CLASS_NAME, 'case_card_caseCard__7-5Z7')
                 #print(len(allTask))
                 threads.clear()
@@ -168,7 +168,7 @@ class TaskBase:
                 with open(self.file_path, 'w', encoding='utf-8') as f:
                   json.dump(temps, f, ensure_ascii=False)
 
-                print(key + " " + len(allTask) + " saved " + str(datetime.now()))
+                print(key + " " + str(len(allTask)) + " saved " + str(datetime.now()))
               
                 if index == self.keyCount - 1 :
                   break;
@@ -200,6 +200,8 @@ class TaskBase:
   
     def Reboot(self):
         logger.info('Reboot...')
+        print('Reboot...')
+        sleep(2)
         #system("busybox reboot")
         system("kill 1")
 
@@ -215,4 +217,4 @@ class TaskerGame(TaskBase):
       if taskData.task_price.startswith('$') and int(taskData.task_price.replace("$", "").replace(",", ""))< 5001 or taskData.task_price.startswith("5千") :
             self.taskList.append(taskData.task_name)
             return True
-      return super().NeedIgnore()
+      return super().NeedIgnore(taskData)
