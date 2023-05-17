@@ -16,6 +16,7 @@ import os
 import time
 import json
 
+
 class TaskData:
     def __init__(self, task_name, task_price):    
         self.task_name = task_name 
@@ -23,14 +24,14 @@ class TaskData:
 
 class TaskBase:
     def __init__(self):   
-        
-        os.environ['TZ'] = 'Asia/Taipei'
-        time.tzset()
+        #os.environ['TZ'] = 'Asia/Taipei'
+        #time.tzset()
         logger.info('Task starting...')
         self.loopDuration = 60
         self.loadWaitTime = 5
         self.ExpiredTime = 259200
-        self.rebootTime = 1800
+        self.rebootTime = 3600
+        self.liveTimeOut = 120
       
         self.file_path = 'save.json'
         self.msg = Message()
@@ -45,6 +46,7 @@ class TaskBase:
         self.options.add_experimental_option('excludeSwitches', ['enable-logging'])
       
         self.taskLists = []
+        self.threads = []
 
         self.keywordList = os.getenv('keywords').split(";")
         self.keyCount = len(self.keywordList)        
@@ -58,6 +60,7 @@ class TaskBase:
         self.InitSaveFile()
         self.timer = 0
         self.running = False
+        self.taskCount = 0
       
     def InitBrowser(self):
         try:
@@ -79,11 +82,26 @@ class TaskBase:
                 for k, value in tlist.items():
                     newTask[k] = datetime.strptime(value, '%Y-%m-%d %H:%M:%S.%f')
                 self.taskLists.append(newTask)
+            count = self.keyCount - len(self.taskLists)
+            if count > 0:
+              for i in range(count):
+                self.taskLists.append({})
             self.RemoveExpired()
         else:
             for i in range(self.keyCount):
                 self.taskLists.append({})
             logger.info(f"檔案 '{self.file_path}' 不存在。")
+
+    def SaveFile(self):
+        temps=[]
+        for tlist in self.taskLists:
+            newTask = {}
+            for k, value in tlist.items():
+                newTask[k] = str(value)              
+            temps.append(newTask)
+              
+        with open(self.file_path, 'w', encoding='utf-8') as f:
+            json.dump(temps, f, ensure_ascii=False)
 
     def RemoveExpired(self):      
         now = datetime.now()
@@ -100,6 +118,9 @@ class TaskBase:
     def NeedIgnore(self, taskData):
       return False
 
+    def URL(self, key):
+        self.browser.get(self.url + key)
+
     def SubTask(self, task, taskList, key):
         try:
             task_name = task.find_element(By.CLASS_NAME, value='case_card_caseTit__2NM7e').text
@@ -112,9 +133,9 @@ class TaskBase:
             if len(task_date.split('/')) > 1:
                 return
     
-            time_now = datetime.now()
             if task_name not in taskList:
-                taskList[task_name] = time_now                
+                self.taskCount += 1 
+                taskList[task_name] = datetime.now()                
                 logger.info(task_name)
                 task_offer = task.find_element(By.CLASS_NAME, 'case_card_iconOffer__1nYP4').text
                 task_caption = task.find_element(By.CLASS_NAME, 'case_card_cardCaption__2lsnZ').text
@@ -129,6 +150,33 @@ class TaskBase:
             #print("SubTask",e)
             return
 
+    def Scrapy(self, taskList, key):
+        try:
+            WebDriverWait(self.browser, self.loadWaitTime).until(EC.visibility_of_element_located((By.CLASS_NAME, 'case_card_caseTit__2NM7e')))                
+        except Exception as e:                    
+            logger.error("WebDriverWait timeout")
+        allTask = self.browser.find_elements(By.CLASS_NAME, 'case_card_caseCard__7-5Z7')
+        #print(len(allTask))
+        #print(key)
+        for task in allTask:     
+            sub_thread = threading.Thread(target = self.SubTask, args = (task, taskList, key))
+            self.threads.append(sub_thread)
+            sub_thread.start()
+      
+    def OnDone(self):
+        return
+
+    def Reset(self):        
+        self.threads.clear()
+        self.taskCount = 0
+      
+    def Wait(self):
+        sleepTimes = self.subDuration
+        for i in range(sleepTimes):                    
+            print("wait " + str(sleepTimes - i) + "...              ", end='\r', flush=True)
+            sleep(1)
+        print("                                                            ", end='\r', flush=True)
+
     def DoTask(self):
         #print("Thread Scrapy")
         if self.running == True:
@@ -136,51 +184,26 @@ class TaskBase:
           return
         self.running = True
         try:
-            threads = []
             for index in range(self.keyCount):
                 #try:
                 key = self.keywordList[index]
                 taskList = self.taskLists[index]
-                self.browser.get(self.url + key)
-                try:
-                    WebDriverWait(self.browser, self.loadWaitTime).until(EC.visibility_of_element_located((By.CLASS_NAME, 'case_card_caseTit__2NM7e')))                
-                except Exception as e:                    
-                    logger.error("WebDriverWait timeout")
-                allTask = self.browser.find_elements(By.CLASS_NAME, 'case_card_caseCard__7-5Z7')
-                #print(len(allTask))
-                threads.clear()
-                #print(key)
-                for task in allTask:     
-                    sub_thread = threading.Thread(target = self.SubTask, args = (task, taskList, key))
-                    threads.append(sub_thread)
-                    sub_thread.start()
+                self.Reset()
+                self.URL(key)
+                self.Scrapy(taskList, key)
     
-                for t in threads:
+                for t in self.threads:
                     t.join()
+                
+                self.OnDone()
                 #print(taskList)
                 self.taskLists[index] = taskList
-                
                 self.RemoveExpired()
-                    
-                temps=[]
-                for tlist in self.taskLists:
-                  newTask = {}
-                  for k, value in tlist.items():
-                    newTask[k] = str(value)              
-                  temps.append(newTask)
-              
-                with open(self.file_path, 'w', encoding='utf-8') as f:
-                  json.dump(temps, f, ensure_ascii=False)
+                self.SaveFile()    
 
-                print(key + " " + str(len(allTask)) + " saved " + str(datetime.now()))
-              
-                if index == self.keyCount - 1 :
-                  break;
-                  
-                sleepTimes = self.subDuration #random.randint(50,60)
-                for i in range(sleepTimes):
-                    sleep(1)
-      
+                print(key + " " + str(self.taskCount) + " saved " + str(datetime.now()))
+
+                self.Wait()
                 #except Exception as e:
                 #    print("Browser: ", e)
                  #   browser.quit()
@@ -200,7 +223,7 @@ class TaskBase:
         #while True:
             #sleep(1)
         self.timer = self.timer + 1
-        if self.timer > self.rebootTime or (datetime.now() - lastTime).total_seconds() > 360:
+        if self.timer > self.rebootTime or (datetime.now() - lastTime).total_seconds() > self.liveTimeOut:
             self.Reboot()
   
     def Reboot(self):
@@ -211,10 +234,10 @@ class TaskBase:
         system("kill 1")
 
 
-class TaskerApp(TaskBase):
-    def __init__(self):    
-        super().__init__()
-        self.url = os.getenv('ca_url')
+#class TaskerApp(TaskBase):
+#    def __init__(self):    
+#        super().__init__()
+#        self.url = os.getenv('ca_url')
 
 
 class TaskerGame(TaskBase):
@@ -223,3 +246,80 @@ class TaskerGame(TaskBase):
             self.taskList.append(taskData.task_name)
             return True
       return super().NeedIgnore(taskData)
+
+class Tasker888(TaskBase):    
+    def URL(self, key):
+        self.browser.get(self.url)
+      
+    def Scrapy(self, taskList, key):
+        try:
+            WebDriverWait(self.browser, self.loadWaitTime).until(EC.visibility_of_element_located((By.CLASS_NAME, 'Hundred_Percent_Style')))                
+        except Exception as e:                    
+            logger.error("WebDriverWait timeout")
+        table = self.browser.find_element(by=By.CLASS_NAME, value='Hundred_Percent_Style')
+        allTask = table.find_elements(by=By.TAG_NAME, value='tr')
+
+        count = len(allTask)
+
+        if count > 0:
+            taskIndex = 0
+            last = count - 2
+            for task in allTask:
+                if taskIndex > 0 and taskIndex < last:
+                    sub_thread = threading.Thread(target = self.SubTask, args = (task, taskList, key))
+                    self.threads.append(sub_thread)
+                    sub_thread.start()                    
+                taskIndex += 1
+
+        return count - 2
+
+    def SubTask(self, task, taskList, key):
+        try:            
+            tdlist = task.find_elements(by=By.TAG_NAME, value='td')
+
+            taskMain = tdlist[0]
+            task_name = taskMain.text
+
+            if key.lower() not in task_name.lower():
+                return
+
+            task_price = tdlist[1].text                      
+
+            if self.NeedIgnore(TaskData(task_name, task_price)):
+              return
+            subBrowser = None
+            if task_name not in taskList:                
+                task_place = "地點" + tdlist[2].text                     
+                task_caption = tdlist[3].text                    
+                task_url = taskMain.find_element(by=By.TAG_NAME, value='a').get_attribute('href')  
+                subBrowser = webdriver.Chrome(options=self.options)
+                subBrowser.get(task_url)
+                try:
+                  WebDriverWait(subBrowser, self.loadWaitTime).until(EC.visibility_of_element_located((By.CLASS_NAME, 'Member_Table_Style')))
+                except Exception as e:                    
+                  logger.error("WebDriverWait timeout")
+                  subBrowser.quit()
+                  subBrowser = None
+                  return
+                
+                self.taskCount += 1 
+                taskList[task_name] = datetime.now()     
+                table = subBrowser.find_element(by=By.CLASS_NAME, value='Member_Table_Style')
+                allData = table.find_elements(by=By.TAG_NAME, value='tr')        
+                task_date = allData[3].find_elements(by=By.TAG_NAME, value='td')[1].text
+                task_caption2 = allData[2].find_elements(by=By.TAG_NAME, value='td')[1].text
+                task_caption3= '[技能要求]\n' + allData[5].find_elements(by=By.TAG_NAME, value='td')[1].text
+
+                logger.info(task_name)
+                
+                message = task_name + ' @ ' + key + "  " + task_date + ' 更新\n' + task_url + '\n' + task_price + '\n' + task_place + '\n' + task_caption + '\n' + task_caption2 + '\n\n' + task_caption3
+                #print(message)
+                self.msg.send_message(message)
+            if subBrowser is not None:
+                subBrowser.quit()
+                subBrowser = None
+        except Exception as e:
+            print("SubTask",e)
+            if subBrowser is not None:
+                subBrowser.quit()
+                subBrowser = None
