@@ -57,6 +57,7 @@ class TaskBase:
         self.InitBrowser()
         self.InitSaveFile()
         self.timer = 0
+        self.running = False
       
     def InitBrowser(self):
         try:
@@ -130,7 +131,10 @@ class TaskBase:
 
     def DoTask(self):
         #print("Thread Scrapy")
-    
+        if self.running == True:
+          print("still running...")
+          return
+        self.running = True
         try:
             threads = []
             for index in range(self.keyCount):
@@ -186,6 +190,7 @@ class TaskBase:
         except Exception as e:
             logger.exception("Thread " + str(e))
             self.InitBrowser()   
+        self.running = False
           
     def DoTaskBackground(self):
         threading.Thread(target=self.DoTask, args=()).start()
@@ -195,7 +200,7 @@ class TaskBase:
         #while True:
             #sleep(1)
         self.timer = self.timer + 1
-        if self.timer > self.rebootTime or (datetime.now() - lastTime).total_seconds() > 120:
+        if self.timer > self.rebootTime or (datetime.now() - lastTime).total_seconds() > 360:
             self.Reboot()
   
     def Reboot(self):
